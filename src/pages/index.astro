@@ -163,24 +163,7 @@ import '../styles/global.css';
     initZenMatch();
     initBreathe();
 }
-    state.journal = loadData<JournalEntry[]>('liminal-journal', []);
-    state.habits = loadData<Habit[]>('liminal-habits', []);
-    state.tasks = loadData<Task[]>('liminal-tasks', []);
-    state.dailyFocus = loadData<Record<string, string>>('liminal-focus', {});
-    state.theme = loadData<Theme>('liminal-theme', 'dark');
-    state.syncId = loadData<string>('liminal-sync', '');
 
-    document.body.setAttribute('data-theme', state.theme);
-    updateThemeIcon();
-    setGreeting();
-    
-    const syncIdInput = document.getElementById('syncIdInput') as HTMLInputElement;
-    if (syncIdInput) syncIdInput.value = state.syncId;
-
-    renderAll();
-    initZenMatch();
-    initBreathe();
-  }
 
   function setGreeting(): void {
     document.getElementById('greetTxt')!.textContent = getGreeting();
