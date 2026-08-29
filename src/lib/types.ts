@@ -19,3 +19,9 @@ export interface Task {
   date: string;
   done: boolean;
 }
+
+export interface DailyFocus {
+  text: string;
+  date: string;
+}
+
