@@ -1,17 +1,514 @@
 ---
-
+import Layout from '../layouts/Layout.astro';
+import Header from '../components/Header.astro';
+import Navigation from '../components/Navigation.astro';
+import FloatingAddButton from '../components/FloatingAddButton.astro';
+import BottomSheet from '../components/BottomSheet.astro';
+import '../styles/global.css';
 ---
 
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="icon" href="/favicon.ico" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
-	</head>
-	<body>
-		<h1>Astro</h1>
-	</body>
-</html>
+<Layout title="liminal">
+  <div id="app">
+    <div class="glow"></div>
+
+    <Header />
+
+    <main>
+      <!-- JOURNAL -->
+      <section class="view active" id="view-journal">
+        <div class="section-title"><span>your entries</span><span id="journalCount"></span></div>
+        <div id="journalList" class="journal-grid"></div>
+      </section>
+
+      <!-- HABITS -->
+      <section class="view" id="view-habits">
+        <div class="section-title"><span>today</span><span id="habitDate"></span></div>
+        <div id="habitList"></div>
+      </section>
+
+      <!-- TASKS -->
+      <section class="view" id="view-tasks">
+        <div class="day-scroller" id="dayScroller"></div>
+        <div id="taskList"></div>
+      </section>
+
+      <!-- INSIGHTS -->
+      <section class="view" id="view-insights">
+        <div class="section-title"><span>your progress</span></div>
+        <div class="card">
+          <div class="stat-grid" id="statGrid"></div>
+        </div>
+        <div class="section-title"><span>habit streaks</span></div>
+        <div id="streakList"></div>
+      </section>
+    </main>
+
+    <FloatingAddButton />
+    <Navigation />
+  </div>
+
+  <!-- overlay -->
+  <div class="overlay" id="overlay"></div>
+
+  <!-- journal sheet -->
+  <BottomSheet id="sheetJournal" title="new entry">
+    <textarea class="field" id="journalInput" rows="5" placeholder="what's on your mind today..."></textarea>
+    <div class="img-row" id="imgRow">
+      <button class="add-img-btn" id="addImgBtn" aria-label="add image">+</button>
+    </div>
+    <input type="file" id="imgFile" accept="image/*" multiple style="display:none" />
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" id="cancelJournal">cancel</button>
+      <button class="btn btn-primary" id="saveJournal">save entry</button>
+    </div>
+  </BottomSheet>
+
+  <!-- habit sheet -->
+  <BottomSheet id="sheetHabit" title="new habit">
+    <input class="field" id="habitInput" placeholder="e.g. gym, read, drink water..." maxlength="40" />
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" id="cancelHabit">cancel</button>
+      <button class="btn btn-primary" id="saveHabit">add habit</button>
+    </div>
+  </BottomSheet>
+
+  <!-- task sheet -->
+  <BottomSheet id="sheetTask" title="new task">
+    <input class="field" id="taskInput" placeholder="what needs doing..." maxlength="80" />
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" id="cancelTask">cancel</button>
+      <button class="btn btn-primary" id="saveTask">add task</button>
+    </div>
+  </BottomSheet>
+</Layout>
+
+<script>
+  import { saveData, loadData } from '../lib/storage';
+  import {
+    fmtDate, todayKey, uid, escapeHtml,
+    calcStreak, last7Dates,
+    getGreeting, getFormattedDate, compressImage,
+  } from '../lib/utils';
+  import type { JournalEntry, Habit, Task, Theme } from '../lib/types';
+
+  /* ── inline SVG for checkmarks (used in dynamic HTML) ── */
+  const checkIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+  const trashIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
+  const trashIconSm = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
+
+  /* ── state ── */
+  interface AppState {
+    journal: JournalEntry[];
+    habits: Habit[];
+    tasks: Task[];
+    theme: Theme;
+  }
+
+  const state: AppState = {
+    journal: [],
+    habits: [],
+    tasks: [],
+    theme: 'dark',
+  };
+
+  let selectedDate = fmtDate(new Date());
+  const views = ['journal', 'habits', 'tasks', 'insights'] as const;
+
+  /* ── init ── */
+  function init(): void {
+    state.journal = loadData<JournalEntry[]>('liminal-journal', []);
+    state.habits = loadData<Habit[]>('liminal-habits', []);
+    state.tasks = loadData<Task[]>('liminal-tasks', []);
+    state.theme = loadData<Theme>('liminal-theme', 'dark');
+    document.body.setAttribute('data-theme', state.theme);
+    updateThemeIcon();
+    setGreeting();
+    renderAll();
+  }
+
+  function setGreeting(): void {
+    document.getElementById('greetTxt')!.textContent = getGreeting();
+    document.getElementById('dateTxt')!.textContent = getFormattedDate();
+  }
+
+  /* ── theme ── */
+  function updateThemeIcon(): void {
+    const sunEl = document.getElementById('themeIconSun')!;
+    const moonEl = document.getElementById('themeIconMoon')!;
+    if (state.theme === 'dark') {
+      sunEl.style.display = 'flex';
+      moonEl.style.display = 'none';
+    } else {
+      sunEl.style.display = 'none';
+      moonEl.style.display = 'flex';
+    }
+  }
+
+  document.getElementById('themeToggle')!.addEventListener('click', () => {
+    state.theme = state.theme === 'dark' ? 'light' : 'dark';
+    document.body.setAttribute('data-theme', state.theme);
+    updateThemeIcon();
+    saveData('liminal-theme', state.theme);
+  });
+
+  /* ── tab navigation ── */
+  document.querySelectorAll<HTMLButtonElement>('.nav-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      views.forEach((v) => document.getElementById('view-' + v)!.classList.remove('active'));
+      document.getElementById('view-' + btn.dataset.view)!.classList.add('active');
+      const fabBtn = document.getElementById('fabBtn') as HTMLButtonElement;
+      fabBtn.style.display = btn.dataset.view === 'insights' ? 'none' : 'flex';
+      render(btn.dataset.view!);
+    });
+  });
+
+  /* ── sheets / overlay ── */
+  const overlay = document.getElementById('overlay')!;
+
+  function openSheet(id: string): void {
+    overlay.classList.add('show');
+    document.getElementById(id)!.classList.add('show');
+  }
+
+  function closeSheets(): void {
+    overlay.classList.remove('show');
+    document.querySelectorAll('.sheet').forEach((s) => s.classList.remove('show'));
+  }
+
+  overlay.addEventListener('click', closeSheets);
+
+  // close on escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeSheets();
+  });
+
+  document.getElementById('fabBtn')!.addEventListener('click', () => {
+    const active = document.querySelector<HTMLButtonElement>('.nav-btn.active')!.dataset.view;
+    if (active === 'journal') openSheet('sheetJournal');
+    else if (active === 'habits') openSheet('sheetHabit');
+    else if (active === 'tasks') openSheet('sheetTask');
+  });
+
+  /* ── journal ── */
+  let pendingImages: string[] = [];
+
+  document.getElementById('addImgBtn')!.addEventListener('click', () => {
+    document.getElementById('imgFile')!.click();
+  });
+
+  document.getElementById('imgFile')!.addEventListener('change', async (e) => {
+    const input = e.target as HTMLInputElement;
+    const files = Array.from(input.files || []).slice(0, 3 - pendingImages.length);
+    for (const f of files) {
+      const compressed = await compressImage(f);
+      pendingImages.push(compressed);
+    }
+    renderImgRow();
+    input.value = '';
+  });
+
+  function renderImgRow(): void {
+    const row = document.getElementById('imgRow')!;
+    row.innerHTML = '';
+    pendingImages.forEach((src, i) => {
+      const t = document.createElement('div');
+      t.className = 'img-thumb';
+      t.innerHTML = `<img src="${src}" alt="attached image"><div class="rm" data-i="${i}">×</div>`;
+      row.appendChild(t);
+    });
+    if (pendingImages.length < 3) {
+      const btn = document.createElement('button');
+      btn.className = 'add-img-btn';
+      btn.setAttribute('aria-label', 'add image');
+      btn.textContent = '+';
+      btn.addEventListener('click', () => document.getElementById('imgFile')!.click());
+      row.appendChild(btn);
+    }
+    row.querySelectorAll<HTMLElement>('.rm').forEach((rm) => {
+      rm.addEventListener('click', () => {
+        pendingImages.splice(+rm.dataset.i!, 1);
+        renderImgRow();
+      });
+    });
+  }
+
+  document.getElementById('cancelJournal')!.addEventListener('click', () => {
+    pendingImages = [];
+    (document.getElementById('journalInput') as HTMLTextAreaElement).value = '';
+    renderImgRow();
+    closeSheets();
+  });
+
+  document.getElementById('saveJournal')!.addEventListener('click', () => {
+    const text = (document.getElementById('journalInput') as HTMLTextAreaElement).value.trim();
+    if (!text && pendingImages.length === 0) return;
+    state.journal.unshift({
+      id: uid(),
+      text,
+      images: [...pendingImages],
+      ts: Date.now(),
+    });
+    saveData('liminal-journal', state.journal);
+    (document.getElementById('journalInput') as HTMLTextAreaElement).value = '';
+    pendingImages = [];
+    renderImgRow();
+    closeSheets();
+    render('journal');
+    render('insights');
+  });
+
+  function renderJournal(): void {
+    const list = document.getElementById('journalList')!;
+    document.getElementById('journalCount')!.textContent = state.journal.length + ' total';
+    if (state.journal.length === 0) {
+      list.innerHTML = '<div class="empty">nothing here yet — tap + to write your first entry</div>';
+      return;
+    }
+    list.innerHTML = state.journal
+      .map((e) => {
+        const d = new Date(e.ts);
+        const dateStr = d
+          .toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+          .toLowerCase();
+        const timeStr = d
+          .toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+          .toLowerCase();
+        return `<div class="card" data-id="${e.id}">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div class="entry-date">${dateStr} · ${timeStr}</div>
+          <button class="icon-btn del-entry" data-id="${e.id}" aria-label="delete entry">${trashIcon}</button>
+        </div>
+        ${e.text ? `<div class="entry-text">${escapeHtml(e.text)}</div>` : ''}
+        ${e.images && e.images.length ? `<div class="entry-images">${e.images.map((src) => `<img src="${src}" alt="journal image">`).join('')}</div>` : ''}
+      </div>`;
+      })
+      .join('');
+
+    list.querySelectorAll<HTMLButtonElement>('.del-entry').forEach((b) =>
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        state.journal = state.journal.filter((x) => x.id !== b.dataset.id);
+        saveData('liminal-journal', state.journal);
+        render('journal');
+        render('insights');
+      }),
+    );
+  }
+
+  /* ── habits ── */
+  document.getElementById('cancelHabit')!.addEventListener('click', closeSheets);
+
+  document.getElementById('saveHabit')!.addEventListener('click', () => {
+    const name = (document.getElementById('habitInput') as HTMLInputElement).value.trim();
+    if (!name) return;
+    state.habits.push({ id: uid(), name, dates: [] });
+    saveData('liminal-habits', state.habits);
+    (document.getElementById('habitInput') as HTMLInputElement).value = '';
+    closeSheets();
+    render('habits');
+    render('insights');
+  });
+
+  function renderHabits(): void {
+    document.getElementById('habitDate')!.textContent = new Date()
+      .toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      .toLowerCase();
+    const list = document.getElementById('habitList')!;
+    if (state.habits.length === 0) {
+      list.innerHTML =
+        '<div class="empty">no habits yet — tap + to start tracking something</div>';
+      return;
+    }
+    const tk = todayKey();
+    const seven = last7Dates();
+    list.innerHTML = state.habits
+      .map((h) => {
+        const done = h.dates.includes(tk);
+        const streak = calcStreak(h);
+        return `<div class="card">
+        <div class="habit-row">
+          <div class="habit-check ${done ? 'done' : ''}" data-id="${h.id}" role="checkbox" aria-checked="${done}" aria-label="mark ${escapeHtml(h.name)} complete" tabindex="0">${checkIcon}</div>
+          <div style="flex:1">
+            <div class="habit-name">${escapeHtml(h.name)}</div>
+            <div class="habit-streak">${streak > 0 ? streak + ' day streak' : 'no streak yet'}</div>
+          </div>
+          <button class="icon-btn del-habit" data-id="${h.id}" aria-label="delete habit">${trashIcon}</button>
+        </div>
+        <div class="dots">${seven.map((d) => `<div class="dot ${h.dates.includes(d) ? 'on' : ''}" title="${d}"></div>`).join('')}</div>
+      </div>`;
+      })
+      .join('');
+
+    list.querySelectorAll<HTMLElement>('.habit-check').forEach((c) => {
+      const handler = () => {
+        const h = state.habits.find((x) => x.id === c.dataset.id);
+        if (!h) return;
+        const tk2 = todayKey();
+        if (h.dates.includes(tk2)) h.dates = h.dates.filter((d) => d !== tk2);
+        else h.dates.push(tk2);
+        saveData('liminal-habits', state.habits);
+        render('habits');
+        render('insights');
+      };
+      c.addEventListener('click', handler);
+      c.addEventListener('keydown', (e) => {
+        if ((e as KeyboardEvent).key === 'Enter' || (e as KeyboardEvent).key === ' ') {
+          e.preventDefault();
+          handler();
+        }
+      });
+    });
+
+    list.querySelectorAll<HTMLButtonElement>('.del-habit').forEach((b) =>
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        state.habits = state.habits.filter((x) => x.id !== b.dataset.id);
+        saveData('liminal-habits', state.habits);
+        render('habits');
+        render('insights');
+      }),
+    );
+  }
+
+  /* ── tasks ── */
+  document.getElementById('cancelTask')!.addEventListener('click', closeSheets);
+
+  document.getElementById('saveTask')!.addEventListener('click', () => {
+    const text = (document.getElementById('taskInput') as HTMLInputElement).value.trim();
+    if (!text) return;
+    state.tasks.push({ id: uid(), text, date: selectedDate, done: false });
+    saveData('liminal-tasks', state.tasks);
+    (document.getElementById('taskInput') as HTMLInputElement).value = '';
+    closeSheets();
+    render('tasks');
+    render('insights');
+  });
+
+  function renderDayScroller(): void {
+    const scroller = document.getElementById('dayScroller')!;
+    const days: Date[] = [];
+    for (let i = -3; i <= 3; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      days.push(d);
+    }
+    scroller.innerHTML = days
+      .map((d) => {
+        const key = fmtDate(d);
+        const isToday = key === todayKey();
+        return `<div class="day-chip ${key === selectedDate ? 'active' : ''}" data-key="${key}" role="button" tabindex="0" aria-label="${isToday ? 'today' : d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}">
+        <div class="dow">${isToday ? 'today' : d.toLocaleDateString(undefined, { weekday: 'short' }).toLowerCase()}</div>
+        <div class="num">${d.getDate()}</div>
+      </div>`;
+      })
+      .join('');
+    scroller.querySelectorAll<HTMLElement>('.day-chip').forEach((c) => {
+      const handler = () => {
+        selectedDate = c.dataset.key!;
+        render('tasks');
+      };
+      c.addEventListener('click', handler);
+      c.addEventListener('keydown', (e) => {
+        if ((e as KeyboardEvent).key === 'Enter' || (e as KeyboardEvent).key === ' ') {
+          e.preventDefault();
+          handler();
+        }
+      });
+    });
+  }
+
+  function renderTasks(): void {
+    renderDayScroller();
+    const list = document.getElementById('taskList')!;
+    const todaysTasks = state.tasks.filter((t) => t.date === selectedDate);
+    if (todaysTasks.length === 0) {
+      list.innerHTML =
+        '<div class="empty">nothing on the list for this day — tap + to add a task</div>';
+      return;
+    }
+    list.innerHTML =
+      '<div class="card">' +
+      todaysTasks
+        .map(
+          (t) => `
+      <div class="task-row" style="padding:6px 0;">
+        <div class="task-check ${t.done ? 'done' : ''}" data-id="${t.id}" role="checkbox" aria-checked="${t.done}" aria-label="mark task complete" tabindex="0">${checkIcon}</div>
+        <div class="task-text ${t.done ? 'done' : ''}">${escapeHtml(t.text)}</div>
+        <button class="icon-btn del-task" data-id="${t.id}" aria-label="delete task" style="width:30px;height:30px;">${trashIconSm}</button>
+      </div>`,
+        )
+        .join('<div style="height:1px;background:var(--border);margin:6px 0;"></div>') +
+      '</div>';
+
+    list.querySelectorAll<HTMLElement>('.task-check').forEach((c) => {
+      const handler = () => {
+        const t = state.tasks.find((x) => x.id === c.dataset.id);
+        if (!t) return;
+        t.done = !t.done;
+        saveData('liminal-tasks', state.tasks);
+        render('tasks');
+        render('insights');
+      };
+      c.addEventListener('click', handler);
+      c.addEventListener('keydown', (e) => {
+        if ((e as KeyboardEvent).key === 'Enter' || (e as KeyboardEvent).key === ' ') {
+          e.preventDefault();
+          handler();
+        }
+      });
+    });
+
+    list.querySelectorAll<HTMLButtonElement>('.del-task').forEach((b) =>
+      b.addEventListener('click', () => {
+        state.tasks = state.tasks.filter((x) => x.id !== b.dataset.id);
+        saveData('liminal-tasks', state.tasks);
+        render('tasks');
+        render('insights');
+      }),
+    );
+  }
+
+  /* ── insights ── */
+  function renderInsights(): void {
+    const totalEntries = state.journal.length;
+    const bestStreak = state.habits.reduce((m, h) => Math.max(m, calcStreak(h)), 0);
+    const tasksCompleted = state.tasks.filter((t) => t.done).length;
+    document.getElementById('statGrid')!.innerHTML = `
+      <div><div class="stat-num">${totalEntries}</div><div class="stat-label">journal entries</div></div>
+      <div><div class="stat-num">${bestStreak}</div><div class="stat-label">best habit streak</div></div>
+      <div><div class="stat-num">${tasksCompleted}</div><div class="stat-label">tasks completed</div></div>
+      <div><div class="stat-num">${state.habits.length}</div><div class="stat-label">habits tracked</div></div>
+    `;
+    const sl = document.getElementById('streakList')!;
+    if (state.habits.length === 0) {
+      sl.innerHTML = '<div class="empty">add a habit to see streaks here</div>';
+    } else {
+      sl.innerHTML = state.habits
+        .map(
+          (h) => `
+        <div class="card" style="display:flex; justify-content:space-between; align-items:center; padding:16px 18px;">
+          <div class="habit-name">${escapeHtml(h.name)}</div>
+          <div class="habit-streak" style="font-weight:700; color:var(--color-accent-violet);">${calcStreak(h)} 🔥</div>
+        </div>`,
+        )
+        .join('');
+    }
+  }
+
+  /* ── render dispatch ── */
+  function render(view: string): void {
+    if (view === 'journal') renderJournal();
+    else if (view === 'habits') renderHabits();
+    else if (view === 'tasks') renderTasks();
+    else if (view === 'insights') renderInsights();
+  }
+
+  function renderAll(): void {
+    views.forEach(render);
+  }
+
+  /* ── boot ── */
+  init();
+</script>

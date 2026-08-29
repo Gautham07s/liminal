@@ -1,0 +1,22 @@
+---
+import { BookOpen, CircleCheckBig, ListChecks, User } from '@lucide/astro';
+---
+
+<nav id="tabbar">
+  <button class="nav-btn active" data-view="journal" aria-label="journal">
+    <BookOpen size={21} />
+    journal
+  </button>
+  <button class="nav-btn" data-view="habits" aria-label="habits">
+    <CircleCheckBig size={21} />
+    habits
+  </button>
+  <button class="nav-btn" data-view="tasks" aria-label="tasks">
+    <ListChecks size={21} />
+    tasks
+  </button>
+  <button class="nav-btn" data-view="insights" aria-label="you">
+    <User size={21} />
+    you
+  </button>
+</nav>
