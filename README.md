@@ -1,43 +1,52 @@
-# Astro Starter Kit: Minimal
+# liminal
 
-```sh
-npm create astro@latest -- --template minimal
+a quiet daily companion for journaling, routines, tasks, and gentle self-reflection.
+
+built with [astro](https://astro.build), [tailwind css v4](https://tailwindcss.com), [lucide icons](https://lucide.dev), and vanilla typescript.
+
+## setup
+
+```bash
+npm install
+npm run dev
 ```
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+the dev server starts at `http://localhost:4321`.
 
-## 🚀 Project Structure
+## build
 
-Inside of your Astro project, you'll see the following folders and files:
-
-```text
-/
-├── public/
-├── src/
-│   └── pages/
-│       └── index.astro
-└── package.json
+```bash
+npm run build
 ```
 
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
+the static output is written to `dist/`.
 
-There's nothing special about `src/components/`, but that's where we like to put any Astro/React/Vue/Svelte/Preact components.
+## deploy to vercel
 
-Any static assets, like images, can be placed in the `public/` directory.
+1. push this repo to github.
+2. go to [vercel.com](https://vercel.com) → **new project** → import the repo.
+3. vercel auto-detects astro. no configuration needed.
+4. click **deploy**.
 
-## 🧞 Commands
+that's it — zero config, free tier compatible.
 
-All commands are run from the root of the project, from a terminal:
+## features
 
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
+- **journal** — write daily entries with up to 3 image attachments (compressed in-browser).
+- **habits** — track daily habits, see 7-day completion dots and current streaks.
+- **tasks** — day-scoped task lists with a 7-day date selector.
+- **insights** — personal metrics: entry count, best streak, tasks completed, habits tracked.
+- **dark / light theme** — toggle and persisted in localstorage.
+- **responsive** — mobile-first with desktop adaptation.
+- **offline-capable** — all data in localstorage, no server needed.
 
-## 👀 Want to learn more?
+## tech
 
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+| layer | choice |
+|-------|--------|
+| framework | astro 5 (static output) |
+| styling | tailwind css v4 + custom css |
+| icons | @lucide/astro |
+| data | localstorage |
+| types | typescript |
+| deploy | vercel (or any static host) |
