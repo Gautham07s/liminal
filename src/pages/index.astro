@@ -110,46 +110,58 @@ import '../styles/global.css';
 
 <script>
   import { saveData, loadData } from '../lib/storage';
+  import { encryptData, decryptData } from '../lib/crypto';
+  import { pushToCloud, pullFromCloud, updateInCloud } from '../lib/sync';
   import {
     fmtDate, todayKey, uid, escapeHtml,
     calcStreak, last7Dates,
     getGreeting, getFormattedDate, compressImage,
   } from '../lib/utils';
-  import type { JournalEntry, Habit, Task, Theme } from '../lib/types';
+  import type { JournalEntry, Habit, Task, Theme, DailyFocus } from '../lib/types';
 
-  /* ── inline SVG for checkmarks (used in dynamic HTML) ── */
   const checkIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   const trashIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
   const trashIconSm = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
 
-  /* ── state ── */
   interface AppState {
     journal: JournalEntry[];
     habits: Habit[];
     tasks: Task[];
+    dailyFocus: Record<string, string>;
     theme: Theme;
+    syncId: string;
   }
 
-  const state: AppState = {
+  let state: AppState = {
     journal: [],
     habits: [],
     tasks: [],
+    dailyFocus: {},
     theme: 'dark',
+    syncId: '',
   };
 
   let selectedDate = fmtDate(new Date());
-  const views = ['journal', 'habits', 'tasks', 'insights'] as const;
+  const views = ['journal', 'habits', 'tasks', 'insights', 'calm'] as const;
 
-  /* ── init ── */
   function init(): void {
     state.journal = loadData<JournalEntry[]>('liminal-journal', []);
     state.habits = loadData<Habit[]>('liminal-habits', []);
     state.tasks = loadData<Task[]>('liminal-tasks', []);
+    state.dailyFocus = loadData<Record<string, string>>('liminal-focus', {});
     state.theme = loadData<Theme>('liminal-theme', 'dark');
+    state.syncId = loadData<string>('liminal-sync', '');
+
     document.body.setAttribute('data-theme', state.theme);
     updateThemeIcon();
     setGreeting();
+    
+    const syncIdInput = document.getElementById('syncIdInput') as HTMLInputElement;
+    if (syncIdInput) syncIdInput.value = state.syncId;
+
     renderAll();
+    initZenMatch();
+    initBreathe();
   }
 
   function setGreeting(): void {
@@ -157,7 +169,6 @@ import '../styles/global.css';
     document.getElementById('dateTxt')!.textContent = getFormattedDate();
   }
 
-  /* ── theme ── */
   function updateThemeIcon(): void {
     const sunEl = document.getElementById('themeIconSun')!;
     const moonEl = document.getElementById('themeIconMoon')!;
@@ -177,7 +188,6 @@ import '../styles/global.css';
     saveData('liminal-theme', state.theme);
   });
 
-  /* ── tab navigation ── */
   document.querySelectorAll<HTMLButtonElement>('.nav-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('active'));
@@ -185,12 +195,11 @@ import '../styles/global.css';
       views.forEach((v) => document.getElementById('view-' + v)!.classList.remove('active'));
       document.getElementById('view-' + btn.dataset.view)!.classList.add('active');
       const fabBtn = document.getElementById('fabBtn') as HTMLButtonElement;
-      fabBtn.style.display = btn.dataset.view === 'insights' ? 'none' : 'flex';
+      fabBtn.style.display = (btn.dataset.view === 'insights' || btn.dataset.view === 'calm') ? 'none' : 'flex';
       render(btn.dataset.view!);
     });
   });
 
-  /* ── sheets / overlay ── */
   const overlay = document.getElementById('overlay')!;
 
   function openSheet(id: string): void {
@@ -204,8 +213,6 @@ import '../styles/global.css';
   }
 
   overlay.addEventListener('click', closeSheets);
-
-  // close on escape key
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeSheets();
   });
@@ -217,7 +224,6 @@ import '../styles/global.css';
     else if (active === 'tasks') openSheet('sheetTask');
   });
 
-  /* ── journal ── */
   let pendingImages: string[] = [];
 
   document.getElementById('addImgBtn')!.addEventListener('click', () => {
@@ -226,304 +232,123 @@ import '../styles/global.css';
 
   document.getElementById('imgFile')!.addEventListener('change', async (e) => {
     const input = e.target as HTMLInputElement;
-    const files = Array.from(input.files || []).slice(0, 3 - pendingImages.length);
-    for (const f of files) {
-      const compressed = await compressImage(f);
-      pendingImages.push(compressed);
+    if (!input.files) return;
+    for (let i = 0; i < input.files.length; i++) {
+      if (pendingImages.length >= 3) break;
+      const b64 = await compressImage(input.files[i]);
+      pendingImages.push(b64);
     }
-    renderImgRow();
     input.value = '';
+    renderPendingImages();
   });
 
-  function renderImgRow(): void {
+  function renderPendingImages(): void {
     const row = document.getElementById('imgRow')!;
+    const addBtn = document.getElementById('addImgBtn')!;
     row.innerHTML = '';
-    pendingImages.forEach((src, i) => {
-      const t = document.createElement('div');
-      t.className = 'img-thumb';
-      t.innerHTML = `<img src="${src}" alt="attached image"><div class="rm" data-i="${i}">×</div>`;
-      row.appendChild(t);
+    pendingImages.forEach((src, idx) => {
+      const d = document.createElement('div');
+      d.className = 'img-thumb';
+      d.innerHTML = `<img src="${src}" alt="attachment" /><div class="rm" data-idx="${idx}">x</div>`;
+      row.appendChild(d);
     });
-    if (pendingImages.length < 3) {
-      const btn = document.createElement('button');
-      btn.className = 'add-img-btn';
-      btn.setAttribute('aria-label', 'add image');
-      btn.textContent = '+';
-      btn.addEventListener('click', () => document.getElementById('imgFile')!.click());
-      row.appendChild(btn);
-    }
-    row.querySelectorAll<HTMLElement>('.rm').forEach((rm) => {
-      rm.addEventListener('click', () => {
-        pendingImages.splice(+rm.dataset.i!, 1);
-        renderImgRow();
+    if (pendingImages.length < 3) row.appendChild(addBtn);
+    row.querySelectorAll('.rm').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const idx = parseInt((e.target as HTMLElement).dataset.idx!);
+        pendingImages.splice(idx, 1);
+        renderPendingImages();
       });
     });
   }
 
   document.getElementById('cancelJournal')!.addEventListener('click', () => {
-    pendingImages = [];
-    (document.getElementById('journalInput') as HTMLTextAreaElement).value = '';
-    renderImgRow();
     closeSheets();
+    (document.getElementById('journalInput') as HTMLTextAreaElement).value = '';
+    pendingImages = [];
+    renderPendingImages();
   });
 
   document.getElementById('saveJournal')!.addEventListener('click', () => {
-    const text = (document.getElementById('journalInput') as HTMLTextAreaElement).value.trim();
+    const input = document.getElementById('journalInput') as HTMLTextAreaElement;
+    const text = input.value.trim();
     if (!text && pendingImages.length === 0) return;
-    state.journal.unshift({
-      id: uid(),
-      text,
-      images: [...pendingImages],
-      ts: Date.now(),
-    });
+    state.journal.unshift({ id: uid(), text, images: [...pendingImages], ts: Date.now() });
     saveData('liminal-journal', state.journal);
-    (document.getElementById('journalInput') as HTMLTextAreaElement).value = '';
-    pendingImages = [];
-    renderImgRow();
     closeSheets();
+    input.value = '';
+    pendingImages = [];
+    renderPendingImages();
     render('journal');
-    render('insights');
   });
 
-  function renderJournal(): void {
-    const list = document.getElementById('journalList')!;
-    document.getElementById('journalCount')!.textContent = state.journal.length + ' total';
-    if (state.journal.length === 0) {
-      list.innerHTML = '<div class="empty">nothing here yet — tap + to write your first entry</div>';
-      return;
-    }
-    list.innerHTML = state.journal
-      .map((e) => {
-        const d = new Date(e.ts);
-        const dateStr = d
-          .toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-          .toLowerCase();
-        const timeStr = d
-          .toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-          .toLowerCase();
-        return `<div class="card" data-id="${e.id}">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <div class="entry-date">${dateStr} · ${timeStr}</div>
-          <button class="icon-btn del-entry" data-id="${e.id}" aria-label="delete entry">${trashIcon}</button>
-        </div>
-        ${e.text ? `<div class="entry-text">${escapeHtml(e.text)}</div>` : ''}
-        ${e.images && e.images.length ? `<div class="entry-images">${e.images.map((src) => `<img src="${src}" alt="journal image">`).join('')}</div>` : ''}
-      </div>`;
-      })
-      .join('');
-
-    list.querySelectorAll<HTMLButtonElement>('.del-entry').forEach((b) =>
-      b.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        state.journal = state.journal.filter((x) => x.id !== b.dataset.id);
-        saveData('liminal-journal', state.journal);
-        render('journal');
-        render('insights');
-      }),
-    );
+  function delJournal(id: string): void {
+    state.journal = state.journal.filter((j) => j.id !== id);
+    saveData('liminal-journal', state.journal);
+    render('journal');
   }
 
-  /* ── habits ── */
-  document.getElementById('cancelHabit')!.addEventListener('click', closeSheets);
-
+  document.getElementById('cancelHabit')!.addEventListener('click', () => closeSheets());
   document.getElementById('saveHabit')!.addEventListener('click', () => {
-    const name = (document.getElementById('habitInput') as HTMLInputElement).value.trim();
+    const input = document.getElementById('habitInput') as HTMLInputElement;
+    const name = input.value.trim();
     if (!name) return;
     state.habits.push({ id: uid(), name, dates: [] });
     saveData('liminal-habits', state.habits);
-    (document.getElementById('habitInput') as HTMLInputElement).value = '';
     closeSheets();
+    input.value = '';
     render('habits');
-    render('insights');
   });
 
-  function renderHabits(): void {
-    document.getElementById('habitDate')!.textContent = new Date()
-      .toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-      .toLowerCase();
-    const list = document.getElementById('habitList')!;
-    if (state.habits.length === 0) {
-      list.innerHTML =
-        '<div class="empty">no habits yet — tap + to start tracking something</div>';
-      return;
-    }
-    const tk = todayKey();
-    const seven = last7Dates();
-    list.innerHTML = state.habits
-      .map((h) => {
-        const done = h.dates.includes(tk);
-        const streak = calcStreak(h);
-        return `<div class="card">
-        <div class="habit-row">
-          <div class="habit-check ${done ? 'done' : ''}" data-id="${h.id}" role="checkbox" aria-checked="${done}" aria-label="mark ${escapeHtml(h.name)} complete" tabindex="0">${checkIcon}</div>
-          <div style="flex:1">
-            <div class="habit-name">${escapeHtml(h.name)}</div>
-            <div class="habit-streak">${streak > 0 ? streak + ' day streak' : 'no streak yet'}</div>
-          </div>
-          <button class="icon-btn del-habit" data-id="${h.id}" aria-label="delete habit">${trashIcon}</button>
-        </div>
-        <div class="dots">${seven.map((d) => `<div class="dot ${h.dates.includes(d) ? 'on' : ''}" title="${d}"></div>`).join('')}</div>
-      </div>`;
-      })
-      .join('');
-
-    list.querySelectorAll<HTMLElement>('.habit-check').forEach((c) => {
-      const handler = () => {
-        const h = state.habits.find((x) => x.id === c.dataset.id);
-        if (!h) return;
-        const tk2 = todayKey();
-        if (h.dates.includes(tk2)) h.dates = h.dates.filter((d) => d !== tk2);
-        else h.dates.push(tk2);
-        saveData('liminal-habits', state.habits);
-        render('habits');
-        render('insights');
-      };
-      c.addEventListener('click', handler);
-      c.addEventListener('keydown', (e) => {
-        if ((e as KeyboardEvent).key === 'Enter' || (e as KeyboardEvent).key === ' ') {
-          e.preventDefault();
-          handler();
-        }
-      });
-    });
-
-    list.querySelectorAll<HTMLButtonElement>('.del-habit').forEach((b) =>
-      b.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        state.habits = state.habits.filter((x) => x.id !== b.dataset.id);
-        saveData('liminal-habits', state.habits);
-        render('habits');
-        render('insights');
-      }),
-    );
+  function toggleHabit(id: string, date: string): void {
+    const h = state.habits.find((x) => x.id === id);
+    if (!h) return;
+    if (h.dates.includes(date)) h.dates = h.dates.filter((d) => d !== date);
+    else h.dates.push(date);
+    saveData('liminal-habits', state.habits);
+    render('habits');
   }
 
-  /* ── tasks ── */
-  document.getElementById('cancelTask')!.addEventListener('click', closeSheets);
+  function delHabit(id: string): void {
+    state.habits = state.habits.filter((h) => h.id !== id);
+    saveData('liminal-habits', state.habits);
+    render('habits');
+  }
 
+  document.getElementById('cancelTask')!.addEventListener('click', () => closeSheets());
   document.getElementById('saveTask')!.addEventListener('click', () => {
-    const text = (document.getElementById('taskInput') as HTMLInputElement).value.trim();
+    const input = document.getElementById('taskInput') as HTMLInputElement;
+    const text = input.value.trim();
     if (!text) return;
     state.tasks.push({ id: uid(), text, date: selectedDate, done: false });
     saveData('liminal-tasks', state.tasks);
-    (document.getElementById('taskInput') as HTMLInputElement).value = '';
     closeSheets();
+    input.value = '';
     render('tasks');
-    render('insights');
   });
 
-  function renderDayScroller(): void {
-    const scroller = document.getElementById('dayScroller')!;
-    const days: Date[] = [];
-    for (let i = -3; i <= 3; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() + i);
-      days.push(d);
-    }
-    scroller.innerHTML = days
-      .map((d) => {
-        const key = fmtDate(d);
-        const isToday = key === todayKey();
-        return `<div class="day-chip ${key === selectedDate ? 'active' : ''}" data-key="${key}" role="button" tabindex="0" aria-label="${isToday ? 'today' : d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}">
-        <div class="dow">${isToday ? 'today' : d.toLocaleDateString(undefined, { weekday: 'short' }).toLowerCase()}</div>
-        <div class="num">${d.getDate()}</div>
-      </div>`;
-      })
-      .join('');
-    scroller.querySelectorAll<HTMLElement>('.day-chip').forEach((c) => {
-      const handler = () => {
-        selectedDate = c.dataset.key!;
-        render('tasks');
-      };
-      c.addEventListener('click', handler);
-      c.addEventListener('keydown', (e) => {
-        if ((e as KeyboardEvent).key === 'Enter' || (e as KeyboardEvent).key === ' ') {
-          e.preventDefault();
-          handler();
-        }
-      });
+  function toggleTask(id: string): void {
+    const t = state.tasks.find((x) => x.id === id);
+    if (!t) return;
+    t.done = !t.done;
+    saveData('liminal-tasks', state.tasks);
+    render('tasks');
+  }
+
+  function delTask(id: string): void {
+    state.tasks = state.tasks.filter((t) => t.id !== id);
+    saveData('liminal-tasks', state.tasks);
+    render('tasks');
+  }
+  
+  const dailyFocusInput = document.getElementById('dailyFocusInput') as HTMLInputElement;
+  if (dailyFocusInput) {
+    dailyFocusInput.addEventListener('input', (e) => {
+      state.dailyFocus[selectedDate] = (e.target as HTMLInputElement).value;
+      saveData('liminal-focus', state.dailyFocus);
     });
   }
 
-  function renderTasks(): void {
-    renderDayScroller();
-    const list = document.getElementById('taskList')!;
-    const todaysTasks = state.tasks.filter((t) => t.date === selectedDate);
-    if (todaysTasks.length === 0) {
-      list.innerHTML =
-        '<div class="empty">nothing on the list for this day — tap + to add a task</div>';
-      return;
-    }
-    list.innerHTML =
-      '<div class="card">' +
-      todaysTasks
-        .map(
-          (t) => `
-      <div class="task-row" style="padding:6px 0;">
-        <div class="task-check ${t.done ? 'done' : ''}" data-id="${t.id}" role="checkbox" aria-checked="${t.done}" aria-label="mark task complete" tabindex="0">${checkIcon}</div>
-        <div class="task-text ${t.done ? 'done' : ''}">${escapeHtml(t.text)}</div>
-        <button class="icon-btn del-task" data-id="${t.id}" aria-label="delete task" style="width:30px;height:30px;">${trashIconSm}</button>
-      </div>`,
-        )
-        .join('<div style="height:1px;background:var(--border);margin:6px 0;"></div>') +
-      '</div>';
-
-    list.querySelectorAll<HTMLElement>('.task-check').forEach((c) => {
-      const handler = () => {
-        const t = state.tasks.find((x) => x.id === c.dataset.id);
-        if (!t) return;
-        t.done = !t.done;
-        saveData('liminal-tasks', state.tasks);
-        render('tasks');
-        render('insights');
-      };
-      c.addEventListener('click', handler);
-      c.addEventListener('keydown', (e) => {
-        if ((e as KeyboardEvent).key === 'Enter' || (e as KeyboardEvent).key === ' ') {
-          e.preventDefault();
-          handler();
-        }
-      });
-    });
-
-    list.querySelectorAll<HTMLButtonElement>('.del-task').forEach((b) =>
-      b.addEventListener('click', () => {
-        state.tasks = state.tasks.filter((x) => x.id !== b.dataset.id);
-        saveData('liminal-tasks', state.tasks);
-        render('tasks');
-        render('insights');
-      }),
-    );
-  }
-
-  /* ── insights ── */
-  function renderInsights(): void {
-    const totalEntries = state.journal.length;
-    const bestStreak = state.habits.reduce((m, h) => Math.max(m, calcStreak(h)), 0);
-    const tasksCompleted = state.tasks.filter((t) => t.done).length;
-    document.getElementById('statGrid')!.innerHTML = `
-      <div><div class="stat-num">${totalEntries}</div><div class="stat-label">journal entries</div></div>
-      <div><div class="stat-num">${bestStreak}</div><div class="stat-label">best habit streak</div></div>
-      <div><div class="stat-num">${tasksCompleted}</div><div class="stat-label">tasks completed</div></div>
-      <div><div class="stat-num">${state.habits.length}</div><div class="stat-label">habits tracked</div></div>
-    `;
-    const sl = document.getElementById('streakList')!;
-    if (state.habits.length === 0) {
-      sl.innerHTML = '<div class="empty">add a habit to see streaks here</div>';
-    } else {
-      sl.innerHTML = state.habits
-        .map(
-          (h) => `
-        <div class="card" style="display:flex; justify-content:space-between; align-items:center; padding:16px 18px;">
-          <div class="habit-name">${escapeHtml(h.name)}</div>
-          <div class="habit-streak" style="font-weight:700; color:var(--color-accent-violet);">${calcStreak(h)} 🔥</div>
-        </div>`,
-        )
-        .join('');
-    }
-  }
-
-  /* ── render dispatch ── */
   function render(view: string): void {
     if (view === 'journal') renderJournal();
     else if (view === 'habits') renderHabits();
@@ -532,9 +357,274 @@ import '../styles/global.css';
   }
 
   function renderAll(): void {
-    views.forEach(render);
+    renderJournal();
+    renderHabits();
+    renderTasks();
+    renderInsights();
   }
 
-  /* ── boot ── */
+  function renderJournal(): void {
+    document.getElementById('journalCount')!.textContent = state.journal.length.toString();
+    const list = document.getElementById('journalList')!;
+    if (state.journal.length === 0) {
+      list.innerHTML = '<div class="empty">nothing here yet.</div>';
+      return;
+    }
+    list.innerHTML = state.journal.map((j) => {
+      const dt = new Date(j.ts).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      let imgs = '';
+      if (j.images.length > 0) {
+        imgs = '<div class="entry-images">' + j.images.map((src) => `<img src="${src}" alt="img" loading="lazy" />`).join('') + '</div>';
+      }
+      return `
+        <div class="card">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="entry-date">${dt}</div>
+            <button class="swipe-del" onclick="window.delJournal('${j.id}')" aria-label="delete">${trashIconSm}</button>
+          </div>
+          ${imgs}
+          <div class="entry-text">${escapeHtml(j.text)}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function renderHabits(): void {
+    const list = document.getElementById('habitList')!;
+    document.getElementById('habitDate')!.textContent = getFormattedDate();
+    if (state.habits.length === 0) {
+      list.innerHTML = '<div class="empty">no habits added.</div>';
+      return;
+    }
+    const dates = last7Dates();
+    list.innerHTML = state.habits.map((h) => {
+      const streak = calcStreak(h.dates);
+      const doneToday = h.dates.includes(todayKey());
+      const dots = dates.map((d) => `<div class="dot ${h.dates.includes(d) ? 'on' : ''}"></div>`).join('');
+      return `
+        <div class="card">
+          <div class="habit-row">
+            <button class="habit-check ${doneToday ? 'done' : ''}" onclick="window.toggleHabit('${h.id}', '${todayKey()}')" aria-label="toggle habit">
+              ${checkIcon}
+            </button>
+            <div class="habit-name">${escapeHtml(h.name)}</div>
+            <div class="habit-streak">${streak} day streak</div>
+            <button class="swipe-del" onclick="window.delHabit('${h.id}')" aria-label="delete">${trashIcon}</button>
+          </div>
+          <div class="dots">${dots}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function renderTasks(): void {
+    const list = document.getElementById('taskList')!;
+    const scroller = document.getElementById('dayScroller')!;
+    
+    if (dailyFocusInput) {
+      dailyFocusInput.value = state.dailyFocus[selectedDate] || '';
+    }
+
+    const dates = last7Dates();
+    if (dates[dates.length - 1] !== todayKey()) dates.push(todayKey());
+    const chips = dates.map((d) => {
+      const dt = new Date(d);
+      const dow = dt.toLocaleDateString(undefined, { weekday: 'short' });
+      const num = dt.getDate();
+      return `
+        <div class="day-chip ${d === selectedDate ? 'active' : ''}" onclick="window.selectDate('${d}')">
+          <div class="dow">${dow}</div>
+          <div class="num">${num}</div>
+        </div>
+      `;
+    });
+    scroller.innerHTML = chips.join('');
+
+    const dayTasks = state.tasks.filter((t) => t.date === selectedDate);
+    if (dayTasks.length === 0) {
+      list.innerHTML = '<div class="empty">no tasks for this day.</div>';
+      return;
+    }
+    list.innerHTML = dayTasks.map((t) => `
+      <div class="card" style="padding: 14px 18px;">
+        <div class="task-row">
+          <button class="task-check ${t.done ? 'done' : ''}" onclick="window.toggleTask('${t.id}')">
+            ${checkIcon}
+          </button>
+          <div class="task-text ${t.done ? 'done' : ''}">${escapeHtml(t.text)}</div>
+          <button class="swipe-del" onclick="window.delTask('${t.id}')">${trashIconSm}</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function renderInsights(): void {
+    const statGrid = document.getElementById('statGrid')!;
+    const bestStreak = Math.max(0, ...state.habits.map((h) => calcStreak(h.dates)));
+    const tasksDone = state.tasks.filter((t) => t.done).length;
+    statGrid.innerHTML = `
+      <div><div class="stat-num">${state.journal.length}</div><div class="stat-label">entries</div></div>
+      <div><div class="stat-num">${bestStreak}</div><div class="stat-label">best streak</div></div>
+      <div><div class="stat-num">${tasksDone}</div><div class="stat-label">tasks done</div></div>
+      <div><div class="stat-num">${state.habits.length}</div><div class="stat-label">habits tracked</div></div>
+    `;
+
+    const sList = document.getElementById('streakList')!;
+    if (state.habits.length === 0) {
+      sList.innerHTML = '<div class="empty">add habits to see streaks.</div>';
+      return;
+    }
+    sList.innerHTML = state.habits.map((h) => `
+      <div class="card" style="display:flex; justify-content:space-between; padding: 14px 18px;">
+        <div style="font-weight:600; font-size:14px;">${escapeHtml(h.name)}</div>
+        <div style="color:var(--text-dim); font-size:12px;">${calcStreak(h.dates)} days</div>
+      </div>
+    `).join('');
+  }
+
+  // Sync Logic
+  const syncIdInput = document.getElementById('syncIdInput') as HTMLInputElement;
+  const syncPassInput = document.getElementById('syncPassInput') as HTMLInputElement;
+  const syncStatus = document.getElementById('syncStatus') as HTMLDivElement;
+
+  document.getElementById('btnPush')?.addEventListener('click', async () => {
+    const pass = syncPassInput.value;
+    if (!pass) return syncStatus.textContent = 'password required';
+    syncStatus.textContent = 'encrypting and pushing...';
+    try {
+      const dataStr = JSON.stringify(state);
+      const encrypted = await encryptData(pass, dataStr);
+      
+      let sid = syncIdInput.value.trim();
+      if (sid) {
+        await updateInCloud(sid, encrypted);
+      } else {
+        sid = await pushToCloud(encrypted);
+        syncIdInput.value = sid;
+        state.syncId = sid;
+        saveData('liminal-sync', sid);
+      }
+      syncStatus.textContent = `synced successfully at ${new Date().toLocaleTimeString()}`;
+    } catch (e) {
+      console.error(e);
+      syncStatus.textContent = 'sync failed. check console.';
+    }
+  });
+
+  document.getElementById('btnPull')?.addEventListener('click', async () => {
+    const sid = syncIdInput.value.trim();
+    const pass = syncPassInput.value;
+    if (!sid || !pass) return syncStatus.textContent = 'sync id and password required';
+    syncStatus.textContent = 'pulling and decrypting...';
+    try {
+      const encrypted = await pullFromCloud(sid);
+      const decStr = await decryptData(pass, encrypted.ciphertext, encrypted.salt, encrypted.iv);
+      const newState = JSON.parse(decStr) as AppState;
+      
+      // Merge into state
+      state = { ...state, ...newState };
+      saveData('liminal-journal', state.journal);
+      saveData('liminal-habits', state.habits);
+      saveData('liminal-tasks', state.tasks);
+      saveData('liminal-focus', state.dailyFocus);
+      saveData('liminal-sync', sid);
+      
+      renderAll();
+      syncStatus.textContent = `data restored at ${new Date().toLocaleTimeString()}`;
+    } catch (e) {
+      console.error(e);
+      syncStatus.textContent = 'pull failed (wrong password?)';
+    }
+  });
+
+  // Zen Match Game
+  function initZenMatch() {
+    const grid = document.getElementById('zenMatchGrid');
+    if (!grid) return;
+    const icons = ['🌿','💧','☀️','🌙','✨','🔥','☁️','🏔️'];
+    let cards = [...icons, ...icons].sort(() => Math.random() - 0.5);
+    
+    let flipped: {idx: number, el: HTMLElement, val: string}[] = [];
+    let matched = 0;
+
+    grid.innerHTML = '';
+    cards.forEach((icon, idx) => {
+      const btn = document.createElement('button');
+      btn.style.width = '60px';
+      btn.style.height = '60px';
+      btn.style.borderRadius = '12px';
+      btn.style.background = 'var(--glass-strong)';
+      btn.style.border = '1px solid var(--border)';
+      btn.style.fontSize = '28px';
+      btn.style.display = 'flex';
+      btn.style.alignItems = 'center';
+      btn.style.justifyContent = 'center';
+      btn.style.cursor = 'pointer';
+      btn.style.color = 'transparent'; // hidden initially
+      btn.style.transition = 'all 0.3s var(--ease-smooth)';
+      
+      btn.addEventListener('click', () => {
+        if (flipped.length === 2 || btn.style.color !== 'transparent') return;
+        
+        btn.style.color = 'var(--text)';
+        btn.textContent = icon;
+        btn.style.transform = 'scale(0.95)';
+        
+        flipped.push({idx, el: btn, val: icon});
+        
+        if (flipped.length === 2) {
+          setTimeout(() => {
+            if (flipped[0].val === flipped[1].val) {
+              flipped[0].el.style.opacity = '0.3';
+              flipped[1].el.style.opacity = '0.3';
+              flipped[0].el.style.cursor = 'default';
+              flipped[1].el.style.cursor = 'default';
+              matched += 2;
+              if (matched === cards.length) {
+                setTimeout(() => initZenMatch(), 1000);
+              }
+            } else {
+              flipped[0].el.style.color = 'transparent';
+              flipped[1].el.style.color = 'transparent';
+              flipped[0].el.textContent = '';
+              flipped[1].el.textContent = '';
+            }
+            flipped[0].el.style.transform = 'scale(1)';
+            flipped[1].el.style.transform = 'scale(1)';
+            flipped = [];
+          }, 800);
+        }
+      });
+      grid.appendChild(btn);
+    });
+  }
+
+  // Breathe Animation
+  function initBreathe() {
+    const circle = document.getElementById('breatheCircle');
+    if (!circle) return;
+    let expanded = false;
+    setInterval(() => {
+      if (document.getElementById('view-calm')?.classList.contains('active')) {
+        circle.style.transform = expanded ? 'scale(1)' : 'scale(1.8)';
+        circle.style.opacity = expanded ? '0.15' : '0.3';
+        expanded = !expanded;
+      }
+    }, 4000);
+  }
+
+  // Expose for inline handlers
+  (window as any).delJournal = delJournal;
+  (window as any).toggleHabit = toggleHabit;
+  (window as any).delHabit = delHabit;
+  (window as any).toggleTask = toggleTask;
+  (window as any).delTask = delTask;
+  (window as any).selectDate = (d: string) => {
+    selectedDate = d;
+    render('tasks');
+  };
+
+  // Start
   init();
 </script>
+
