@@ -146,6 +146,24 @@ import '../styles/global.css';
 
   function init(): void {
     state.journal = loadData<JournalEntry[]>('liminal-journal', []);
+    state.habits = loadData<Habit[]>('liminal-habits', []).map(h => ({...h, dates: h.dates || []}));
+    state.tasks = loadData<Task[]>('liminal-tasks', []).map(t => ({...t, done: t.done || false}));
+    state.dailyFocus = loadData<Record<string, string>>('liminal-focus', {}) || {};
+    state.theme = loadData<Theme>('liminal-theme', 'dark');
+    state.syncId = loadData<string>('liminal-sync', '');
+
+    document.body.setAttribute('data-theme', state.theme);
+    updateThemeIcon();
+    setGreeting();
+    
+    const syncIdInput = document.getElementById('syncIdInput') as HTMLInputElement;
+    if (syncIdInput) syncIdInput.value = state.syncId;
+
+    renderAll();
+    initZenMatch();
+    initBreathe();
+}
+    state.journal = loadData<JournalEntry[]>('liminal-journal', []);
     state.habits = loadData<Habit[]>('liminal-habits', []);
     state.tasks = loadData<Task[]>('liminal-tasks', []);
     state.dailyFocus = loadData<Record<string, string>>('liminal-focus', {});
@@ -303,7 +321,7 @@ import '../styles/global.css';
   function toggleHabit(id: string, date: string): void {
     const h = state.habits.find((x) => x.id === id);
     if (!h) return;
-    if (h.dates.includes(date)) h.dates = h.dates.filter((d) => d !== date);
+    if ((h.dates || []).includes(date)) h.dates = h.dates.filter((d) => d !== date);
     else h.dates.push(date);
     saveData('liminal-habits', state.habits);
     render('habits');
@@ -399,8 +417,8 @@ import '../styles/global.css';
     const dates = last7Dates();
     list.innerHTML = state.habits.map((h) => {
       const streak = calcStreak(h.dates);
-      const doneToday = h.dates.includes(todayKey());
-      const dots = dates.map((d) => `<div class="dot ${h.dates.includes(d) ? 'on' : ''}"></div>`).join('');
+      const doneToday = (h.dates || []).includes(todayKey());
+      const dots = dates.map((d) => `<div class="dot ${(h.dates || []).includes(d) ? 'on' : ''}"></div>`).join('');
       return `
         <div class="card">
           <div class="habit-row">
