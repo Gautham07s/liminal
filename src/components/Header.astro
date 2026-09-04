@@ -4,11 +4,14 @@ import { Sun, Moon } from '@lucide/astro';
 
 <header>
   <div>
-    <div class="greet" id="greetTxt">hey there</div>
+    <div class="brand-row">
+      <span class="brand-mark">l</span>
+      <div class="greet" id="greetTxt">hey there</div>
+    </div>
     <div class="date-text" id="dateTxt"></div>
   </div>
   <button class="theme-btn" id="themeToggle" aria-label="toggle theme">
-    <span id="themeIconSun" style="display:none;"><Sun size={18} /></span>
-    <span id="themeIconMoon" style="display:none;"><Moon size={18} /></span>
+    <span id="themeIconSun" class="theme-icon"><Sun size={18} /></span>
+    <span id="themeIconMoon" class="theme-icon"><Moon size={18} /></span>
   </button>
 </header>

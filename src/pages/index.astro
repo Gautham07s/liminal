@@ -22,29 +22,38 @@ import '../styles/global.css';
 
       <!-- HABITS -->
       <section class="view" id="view-habits">
-        <div class="section-title"><span>today</span><span id="habitDate"></span></div>
+        <div class="section-title"><span>today's habits</span><span id="habitDate"></span></div>
+        <div id="habitProgress"></div>
         <div id="habitList"></div>
       </section>
 
       <!-- TASKS -->
       <section class="view" id="view-tasks">
-        <div class="card" style="margin-bottom: 20px; border-color: var(--border);">
-          <div style="font-size:10px; font-weight:700; color:var(--text-faint); margin-bottom:4px; letter-spacing:0.05em;">DAILY FOCUS</div>
-          <input type="text" id="dailyFocusInput" placeholder="one big thing for today..." style="width:100%; background:transparent; border:none; color:var(--text); font-size:16px; font-weight:600; outline:none;" />
+        <div class="daily-focus-wrap">
+          <div class="daily-focus-label">daily focus</div>
+          <input type="text" id="dailyFocusInput" class="daily-focus-input" placeholder="what's your one big thing today..." />
         </div>
         <div class="day-scroller" id="dayScroller"></div>
+        <div id="taskProgress"></div>
         <div id="taskList"></div>
       </section>
 
       <!-- CALM -->
       <section class="view" id="view-calm">
         <div class="section-title"><span>breathe</span></div>
-        <div class="card" style="display:flex; justify-content:center; align-items:center; height: 160px; overflow:hidden;">
-          <div id="breatheCircle" style="width: 80px; height: 80px; border-radius: 50%; background: var(--color-accent-red); opacity: 0.15; transition: all 4s ease-in-out; transform: scale(1);"></div>
+        <div class="card">
+          <div class="breathe-container">
+            <div class="breathe-circle" id="breatheCircle"></div>
+            <div class="breathe-label" id="breatheLabel">breathe in...</div>
+          </div>
         </div>
         <div class="section-title"><span>zen match</span></div>
         <div class="card">
-          <div id="zenMatchGrid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; justify-items: center;"></div>
+          <div id="zenMatchGrid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; justify-items: center;"></div>
+          <div class="zen-stats">
+            <span class="zen-moves" id="zenMoves">0 moves</span>
+            <button class="zen-reset" id="zenReset">reset</button>
+          </div>
         </div>
       </section>
 
@@ -117,11 +126,19 @@ import '../styles/global.css';
     calcStreak, last7Dates,
     getGreeting, getFormattedDate, compressImage,
   } from '../lib/utils';
-  import type { JournalEntry, Habit, Task, Theme, DailyFocus } from '../lib/types';
+  import type { JournalEntry, Habit, Task, Theme } from '../lib/types';
+
+  /* ══════════════════════════════════════════
+     ICONS (inline SVG strings)
+     ══════════════════════════════════════════ */
 
   const checkIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   const trashIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
   const trashIconSm = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
+
+  /* ══════════════════════════════════════════
+     STATE
+     ══════════════════════════════════════════ */
 
   interface AppState {
     journal: JournalEntry[];
@@ -144,6 +161,31 @@ import '../styles/global.css';
   let selectedDate = fmtDate(new Date());
   const views = ['journal', 'habits', 'tasks', 'insights', 'calm'] as const;
 
+  /* ══════════════════════════════════════════
+     HELPERS
+     ══════════════════════════════════════════ */
+
+  function relativeTime(ts: number): string {
+    const diff = Date.now() - ts;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days === 1) return 'yesterday';
+    if (days < 7) return `${days}d ago`;
+    return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }).toLowerCase();
+  }
+
+  function $(id: string): HTMLElement {
+    return document.getElementById(id)!;
+  }
+
+  /* ══════════════════════════════════════════
+     INIT
+     ══════════════════════════════════════════ */
+
   function init(): void {
     state.journal = loadData<JournalEntry[]>('liminal-journal', []);
     state.habits = loadData<Habit[]>('liminal-habits', []).map(h => ({...h, dates: h.dates || []}));
@@ -155,24 +197,27 @@ import '../styles/global.css';
     document.body.setAttribute('data-theme', state.theme);
     updateThemeIcon();
     setGreeting();
-    
-    const syncIdInput = document.getElementById('syncIdInput') as HTMLInputElement;
+
+    const syncIdInput = $('syncIdInput') as HTMLInputElement;
     if (syncIdInput) syncIdInput.value = state.syncId;
 
     renderAll();
     initZenMatch();
     initBreathe();
-}
-
-
-  function setGreeting(): void {
-    document.getElementById('greetTxt')!.textContent = getGreeting();
-    document.getElementById('dateTxt')!.textContent = getFormattedDate();
   }
 
+  function setGreeting(): void {
+    $('greetTxt').textContent = getGreeting();
+    $('dateTxt').textContent = getFormattedDate();
+  }
+
+  /* ══════════════════════════════════════════
+     THEME TOGGLE
+     ══════════════════════════════════════════ */
+
   function updateThemeIcon(): void {
-    const sunEl = document.getElementById('themeIconSun')!;
-    const moonEl = document.getElementById('themeIconMoon')!;
+    const sunEl = $('themeIconSun');
+    const moonEl = $('themeIconMoon');
     if (state.theme === 'dark') {
       sunEl.style.display = 'flex';
       moonEl.style.display = 'none';
@@ -182,30 +227,38 @@ import '../styles/global.css';
     }
   }
 
-  document.getElementById('themeToggle')!.addEventListener('click', () => {
+  $('themeToggle').addEventListener('click', () => {
     state.theme = state.theme === 'dark' ? 'light' : 'dark';
     document.body.setAttribute('data-theme', state.theme);
     updateThemeIcon();
     saveData('liminal-theme', state.theme);
   });
 
+  /* ══════════════════════════════════════════
+     TAB NAVIGATION
+     ══════════════════════════════════════════ */
+
   document.querySelectorAll<HTMLButtonElement>('.nav-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
-      views.forEach((v) => document.getElementById('view-' + v)!.classList.remove('active'));
-      document.getElementById('view-' + btn.dataset.view)!.classList.add('active');
-      const fabBtn = document.getElementById('fabBtn') as HTMLButtonElement;
+      views.forEach((v) => $('view-' + v).classList.remove('active'));
+      $('view-' + btn.dataset.view!).classList.add('active');
+      const fabBtn = $('fabBtn') as HTMLButtonElement;
       fabBtn.style.display = (btn.dataset.view === 'insights' || btn.dataset.view === 'calm') ? 'none' : 'flex';
       render(btn.dataset.view!);
     });
   });
 
-  const overlay = document.getElementById('overlay')!;
+  /* ══════════════════════════════════════════
+     SHEETS / OVERLAY
+     ══════════════════════════════════════════ */
+
+  const overlay = $('overlay');
 
   function openSheet(id: string): void {
     overlay.classList.add('show');
-    document.getElementById(id)!.classList.add('show');
+    $(id).classList.add('show');
   }
 
   function closeSheets(): void {
@@ -218,20 +271,24 @@ import '../styles/global.css';
     if (e.key === 'Escape') closeSheets();
   });
 
-  document.getElementById('fabBtn')!.addEventListener('click', () => {
+  $('fabBtn').addEventListener('click', () => {
     const active = document.querySelector<HTMLButtonElement>('.nav-btn.active')!.dataset.view;
     if (active === 'journal') openSheet('sheetJournal');
     else if (active === 'habits') openSheet('sheetHabit');
     else if (active === 'tasks') openSheet('sheetTask');
   });
 
+  /* ══════════════════════════════════════════
+     JOURNAL
+     ══════════════════════════════════════════ */
+
   let pendingImages: string[] = [];
 
-  document.getElementById('addImgBtn')!.addEventListener('click', () => {
-    document.getElementById('imgFile')!.click();
+  $('addImgBtn').addEventListener('click', () => {
+    $('imgFile').click();
   });
 
-  document.getElementById('imgFile')!.addEventListener('change', async (e) => {
+  $('imgFile').addEventListener('change', async (e) => {
     const input = e.target as HTMLInputElement;
     if (!input.files) return;
     for (let i = 0; i < input.files.length; i++) {
@@ -244,13 +301,13 @@ import '../styles/global.css';
   });
 
   function renderPendingImages(): void {
-    const row = document.getElementById('imgRow')!;
-    const addBtn = document.getElementById('addImgBtn')!;
+    const row = $('imgRow');
+    const addBtn = $('addImgBtn');
     row.innerHTML = '';
     pendingImages.forEach((src, idx) => {
       const d = document.createElement('div');
       d.className = 'img-thumb';
-      d.innerHTML = `<img src="${src}" alt="attachment" /><div class="rm" data-idx="${idx}">x</div>`;
+      d.innerHTML = `<img src="${src}" alt="attachment" /><div class="rm" data-idx="${idx}">×</div>`;
       row.appendChild(d);
     });
     if (pendingImages.length < 3) row.appendChild(addBtn);
@@ -263,15 +320,15 @@ import '../styles/global.css';
     });
   }
 
-  document.getElementById('cancelJournal')!.addEventListener('click', () => {
+  $('cancelJournal').addEventListener('click', () => {
     closeSheets();
-    (document.getElementById('journalInput') as HTMLTextAreaElement).value = '';
+    ($('journalInput') as HTMLTextAreaElement).value = '';
     pendingImages = [];
     renderPendingImages();
   });
 
-  document.getElementById('saveJournal')!.addEventListener('click', () => {
-    const input = document.getElementById('journalInput') as HTMLTextAreaElement;
+  $('saveJournal').addEventListener('click', () => {
+    const input = $('journalInput') as HTMLTextAreaElement;
     const text = input.value.trim();
     if (!text && pendingImages.length === 0) return;
     state.journal.unshift({ id: uid(), text, images: [...pendingImages], ts: Date.now() });
@@ -281,17 +338,53 @@ import '../styles/global.css';
     pendingImages = [];
     renderPendingImages();
     render('journal');
+    render('insights');
   });
 
-  function delJournal(id: string): void {
-    state.journal = state.journal.filter((j) => j.id !== id);
-    saveData('liminal-journal', state.journal);
-    render('journal');
+  function renderJournal(): void {
+    $('journalCount').textContent = state.journal.length + ' total';
+    const list = $('journalList');
+    if (state.journal.length === 0) {
+      list.innerHTML = '<div class="empty"><span class="empty-emoji">📝</span>nothing here yet — tap + to write your first entry</div>';
+      return;
+    }
+    list.innerHTML = state.journal.map((j) => {
+      const timeLabel = relativeTime(j.ts);
+      let imgs = '';
+      if (j.images && j.images.length > 0) {
+        imgs = '<div class="entry-images">' + j.images.map((src) => `<img src="${src}" alt="attachment" loading="lazy" />`).join('') + '</div>';
+      }
+      return `
+        <div class="card" data-journal-id="${j.id}">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="entry-date">${timeLabel}</div>
+            <button class="swipe-del js-del-journal" data-id="${j.id}" aria-label="delete">${trashIconSm}</button>
+          </div>
+          ${j.text ? `<div class="entry-text">${escapeHtml(j.text)}</div>` : ''}
+          ${imgs}
+        </div>
+      `;
+    }).join('');
+
+    // Event delegation for delete
+    list.querySelectorAll<HTMLButtonElement>('.js-del-journal').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        state.journal = state.journal.filter((x) => x.id !== btn.dataset.id);
+        saveData('liminal-journal', state.journal);
+        render('journal');
+        render('insights');
+      });
+    });
   }
 
-  document.getElementById('cancelHabit')!.addEventListener('click', () => closeSheets());
-  document.getElementById('saveHabit')!.addEventListener('click', () => {
-    const input = document.getElementById('habitInput') as HTMLInputElement;
+  /* ══════════════════════════════════════════
+     HABITS
+     ══════════════════════════════════════════ */
+
+  $('cancelHabit').addEventListener('click', () => closeSheets());
+  $('saveHabit').addEventListener('click', () => {
+    const input = $('habitInput') as HTMLInputElement;
     const name = input.value.trim();
     if (!name) return;
     state.habits.push({ id: uid(), name, dates: [] });
@@ -299,26 +392,91 @@ import '../styles/global.css';
     closeSheets();
     input.value = '';
     render('habits');
+    render('insights');
   });
 
-  function toggleHabit(id: string, date: string): void {
-    const h = state.habits.find((x) => x.id === id);
-    if (!h) return;
-    if ((h.dates || []).includes(date)) h.dates = h.dates.filter((d) => d !== date);
-    else h.dates.push(date);
-    saveData('liminal-habits', state.habits);
-    render('habits');
+  function renderHabits(): void {
+    const list = $('habitList');
+    $('habitDate').textContent = getFormattedDate();
+
+    if (state.habits.length === 0) {
+      $('habitProgress').innerHTML = '';
+      list.innerHTML = '<div class="empty"><span class="empty-emoji">✨</span>no habits yet — tap + to start tracking something</div>';
+      return;
+    }
+
+    // Progress bar
+    const tk = todayKey();
+    const doneCount = state.habits.filter(h => (h.dates || []).includes(tk)).length;
+    const total = state.habits.length;
+    const pct = Math.round((doneCount / total) * 100);
+    $('habitProgress').innerHTML = `
+      <div class="card" style="padding: 14px 18px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-size:13px; font-weight:700; color:var(--text-dim);">${doneCount} of ${total} done</span>
+          <span style="font-size:13px; font-weight:800; background:linear-gradient(135deg, var(--color-accent-amber), var(--color-accent-violet)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;">${pct}%</span>
+        </div>
+        <div class="habit-progress-bar"><div class="habit-progress-fill" style="width:${pct}%"></div></div>
+      </div>
+    `;
+
+    const dates = last7Dates();
+    list.innerHTML = state.habits.map((h) => {
+      const streak = calcStreak(h);
+      const doneToday = (h.dates || []).includes(tk);
+      const dots = dates.map((d, i) =>
+        `<div class="dot ${(h.dates || []).includes(d) ? 'on' : ''} ${d === tk ? 'today' : ''}"></div>`
+      ).join('');
+      const streakText = streak > 0 ? `${streak} day streak 🔥` : 'start today';
+      return `
+        <div class="card">
+          <div class="habit-row">
+            <button class="habit-check ${doneToday ? 'done' : ''} js-toggle-habit" data-id="${h.id}" aria-label="toggle habit">
+              ${checkIcon}
+            </button>
+            <div style="flex:1; min-width:0;">
+              <div class="habit-name">${escapeHtml(h.name)}</div>
+              <div class="habit-streak">${streakText}</div>
+            </div>
+            <button class="swipe-del js-del-habit" data-id="${h.id}" aria-label="delete">${trashIcon}</button>
+          </div>
+          <div class="dots">${dots}</div>
+        </div>
+      `;
+    }).join('');
+
+    // Event delegation
+    list.querySelectorAll<HTMLButtonElement>('.js-toggle-habit').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const h = state.habits.find((x) => x.id === btn.dataset.id);
+        if (!h) return;
+        const tk2 = todayKey();
+        if ((h.dates || []).includes(tk2)) h.dates = h.dates.filter((d) => d !== tk2);
+        else h.dates.push(tk2);
+        saveData('liminal-habits', state.habits);
+        render('habits');
+        render('insights');
+      });
+    });
+
+    list.querySelectorAll<HTMLButtonElement>('.js-del-habit').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        state.habits = state.habits.filter((x) => x.id !== btn.dataset.id);
+        saveData('liminal-habits', state.habits);
+        render('habits');
+        render('insights');
+      });
+    });
   }
 
-  function delHabit(id: string): void {
-    state.habits = state.habits.filter((h) => h.id !== id);
-    saveData('liminal-habits', state.habits);
-    render('habits');
-  }
+  /* ══════════════════════════════════════════
+     TASKS
+     ══════════════════════════════════════════ */
 
-  document.getElementById('cancelTask')!.addEventListener('click', () => closeSheets());
-  document.getElementById('saveTask')!.addEventListener('click', () => {
-    const input = document.getElementById('taskInput') as HTMLInputElement;
+  $('cancelTask').addEventListener('click', () => closeSheets());
+  $('saveTask').addEventListener('click', () => {
+    const input = $('taskInput') as HTMLInputElement;
     const text = input.value.trim();
     if (!text) return;
     state.tasks.push({ id: uid(), text, date: selectedDate, done: false });
@@ -326,29 +484,296 @@ import '../styles/global.css';
     closeSheets();
     input.value = '';
     render('tasks');
+    render('insights');
   });
 
-  function toggleTask(id: string): void {
-    const t = state.tasks.find((x) => x.id === id);
-    if (!t) return;
-    t.done = !t.done;
-    saveData('liminal-tasks', state.tasks);
-    render('tasks');
-  }
-
-  function delTask(id: string): void {
-    state.tasks = state.tasks.filter((t) => t.id !== id);
-    saveData('liminal-tasks', state.tasks);
-    render('tasks');
-  }
-  
-  const dailyFocusInput = document.getElementById('dailyFocusInput') as HTMLInputElement;
+  const dailyFocusInput = $('dailyFocusInput') as HTMLInputElement;
   if (dailyFocusInput) {
     dailyFocusInput.addEventListener('input', (e) => {
       state.dailyFocus[selectedDate] = (e.target as HTMLInputElement).value;
       saveData('liminal-focus', state.dailyFocus);
     });
   }
+
+  function renderTasks(): void {
+    const list = $('taskList');
+    const scroller = $('dayScroller');
+
+    if (dailyFocusInput) {
+      dailyFocusInput.value = state.dailyFocus[selectedDate] || '';
+    }
+
+    // Day scroller
+    const days: Date[] = [];
+    for (let i = -3; i <= 3; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      days.push(d);
+    }
+
+    scroller.innerHTML = days.map((d) => {
+      const key = fmtDate(d);
+      const isToday = key === todayKey();
+      const dow = isToday ? 'today' : d.toLocaleDateString(undefined, { weekday: 'short' }).toLowerCase();
+      return `
+        <div class="day-chip ${key === selectedDate ? 'active' : ''} js-select-date" data-key="${key}">
+          <div class="dow">${dow}</div>
+          <div class="num">${d.getDate()}</div>
+        </div>
+      `;
+    }).join('');
+
+    scroller.querySelectorAll<HTMLDivElement>('.js-select-date').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        selectedDate = chip.dataset.key!;
+        render('tasks');
+      });
+    });
+
+    // Task progress
+    const dayTasks = state.tasks.filter((t) => t.date === selectedDate);
+    const doneTasks = dayTasks.filter((t) => t.done).length;
+    const taskProgressEl = $('taskProgress');
+
+    if (dayTasks.length > 0) {
+      taskProgressEl.innerHTML = `<div class="task-progress">${doneTasks} of ${dayTasks.length} done</div>`;
+    } else {
+      taskProgressEl.innerHTML = '';
+    }
+
+    if (dayTasks.length === 0) {
+      list.innerHTML = '<div class="empty"><span class="empty-emoji">📋</span>nothing on the list — tap + to add a task</div>';
+      return;
+    }
+
+    list.innerHTML = dayTasks.map((t) => `
+      <div class="card" style="padding: 14px 18px;">
+        <div class="task-row">
+          <button class="task-check ${t.done ? 'done' : ''} js-toggle-task" data-id="${t.id}" aria-label="toggle task">
+            ${checkIcon}
+          </button>
+          <div class="task-text ${t.done ? 'done' : ''}">${escapeHtml(t.text)}</div>
+          <button class="swipe-del js-del-task" data-id="${t.id}" aria-label="delete">${trashIconSm}</button>
+        </div>
+      </div>
+    `).join('');
+
+    // Event delegation
+    list.querySelectorAll<HTMLButtonElement>('.js-toggle-task').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const t = state.tasks.find((x) => x.id === btn.dataset.id);
+        if (!t) return;
+        t.done = !t.done;
+        saveData('liminal-tasks', state.tasks);
+        render('tasks');
+        render('insights');
+      });
+    });
+
+    list.querySelectorAll<HTMLButtonElement>('.js-del-task').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.tasks = state.tasks.filter((x) => x.id !== btn.dataset.id);
+        saveData('liminal-tasks', state.tasks);
+        render('tasks');
+        render('insights');
+      });
+    });
+  }
+
+  /* ══════════════════════════════════════════
+     INSIGHTS
+     ══════════════════════════════════════════ */
+
+  function renderInsights(): void {
+    const statGrid = $('statGrid');
+    const bestStreak = Math.max(0, ...state.habits.map((h) => calcStreak(h)));
+    const tasksDone = state.tasks.filter((t) => t.done).length;
+    statGrid.innerHTML = `
+      <div class="stat-item"><div class="stat-num">${state.journal.length}</div><div class="stat-label">entries</div></div>
+      <div class="stat-item"><div class="stat-num">${bestStreak}</div><div class="stat-label">best streak</div></div>
+      <div class="stat-item"><div class="stat-num">${tasksDone}</div><div class="stat-label">tasks done</div></div>
+      <div class="stat-item"><div class="stat-num">${state.habits.length}</div><div class="stat-label">habits tracked</div></div>
+    `;
+
+    const sList = $('streakList');
+    if (state.habits.length === 0) {
+      sList.innerHTML = '<div class="empty"><span class="empty-emoji">🔥</span>add habits to see streaks here</div>';
+      return;
+    }
+
+    const maxStreak = Math.max(1, ...state.habits.map(h => calcStreak(h)));
+    sList.innerHTML = state.habits.map((h) => {
+      const streak = calcStreak(h);
+      const pct = Math.round((streak / maxStreak) * 100);
+      return `
+        <div class="card">
+          <div class="streak-row">
+            <div class="streak-name">${escapeHtml(h.name)}</div>
+            <div class="streak-value">${streak} ${streak === 1 ? 'day' : 'days'} 🔥</div>
+          </div>
+          <div class="streak-bar-wrap"><div class="streak-bar-fill" style="width:${pct}%"></div></div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  /* ══════════════════════════════════════════
+     SYNC
+     ══════════════════════════════════════════ */
+
+  const syncIdInput = $('syncIdInput') as HTMLInputElement;
+  const syncPassInput = $('syncPassInput') as HTMLInputElement;
+  const syncStatusEl = $('syncStatus');
+
+  function setSyncStatus(text: string, type: 'success' | 'error' | 'loading' | '' = '') {
+    const dotClass = type ? `sync-status-dot ${type}` : '';
+    const dot = type ? `<span class="${dotClass}"></span>` : '';
+    syncStatusEl.innerHTML = `${dot}${text}`;
+  }
+
+  $('btnPush')?.addEventListener('click', async () => {
+    const pass = syncPassInput.value;
+    if (!pass) return setSyncStatus('password required', 'error');
+    setSyncStatus('encrypting and pushing...', 'loading');
+    try {
+      const dataStr = JSON.stringify(state);
+      const encrypted = await encryptData(pass, dataStr);
+
+      let sid = syncIdInput.value.trim();
+      if (sid) {
+        await updateInCloud(sid, encrypted);
+      } else {
+        sid = await pushToCloud(encrypted);
+        syncIdInput.value = sid;
+        state.syncId = sid;
+        saveData('liminal-sync', sid);
+      }
+      setSyncStatus(`synced at ${new Date().toLocaleTimeString()}`, 'success');
+    } catch (e) {
+      console.error(e);
+      setSyncStatus('sync failed — check console', 'error');
+    }
+  });
+
+  $('btnPull')?.addEventListener('click', async () => {
+    const sid = syncIdInput.value.trim();
+    const pass = syncPassInput.value;
+    if (!sid || !pass) return setSyncStatus('sync id and password required', 'error');
+    setSyncStatus('pulling and decrypting...', 'loading');
+    try {
+      const encrypted = await pullFromCloud(sid);
+      const decStr = await decryptData(pass, encrypted.ciphertext, encrypted.salt, encrypted.iv);
+      const newState = JSON.parse(decStr) as AppState;
+
+      state = { ...state, ...newState };
+      saveData('liminal-journal', state.journal);
+      saveData('liminal-habits', state.habits);
+      saveData('liminal-tasks', state.tasks);
+      saveData('liminal-focus', state.dailyFocus);
+      saveData('liminal-sync', sid);
+
+      renderAll();
+      setSyncStatus(`data restored at ${new Date().toLocaleTimeString()}`, 'success');
+    } catch (e) {
+      console.error(e);
+      setSyncStatus('pull failed (wrong password?)', 'error');
+    }
+  });
+
+  /* ══════════════════════════════════════════
+     ZEN MATCH
+     ══════════════════════════════════════════ */
+
+  let zenMoves = 0;
+
+  function initZenMatch() {
+    const grid = $('zenMatchGrid');
+    if (!grid) return;
+    zenMoves = 0;
+    updateZenMoves();
+
+    const icons = ['🌿', '💧', '☀️', '🌙', '✨', '🔥', '☁️', '🏔️'];
+    const cards = [...icons, ...icons].sort(() => Math.random() - 0.5);
+
+    let flipped: { idx: number; el: HTMLElement; val: string }[] = [];
+    let matched = 0;
+
+    grid.innerHTML = '';
+    cards.forEach((icon, idx) => {
+      const btn = document.createElement('button');
+      btn.className = 'zen-card';
+      btn.dataset.idx = String(idx);
+      btn.dataset.val = icon;
+      btn.textContent = '';
+
+      btn.addEventListener('click', () => {
+        if (flipped.length === 2 || btn.classList.contains('flipped') || btn.classList.contains('matched')) return;
+
+        btn.textContent = icon;
+        btn.classList.add('flipped');
+        flipped.push({ idx, el: btn, val: icon });
+
+        if (flipped.length === 2) {
+          zenMoves++;
+          updateZenMoves();
+
+          setTimeout(() => {
+            if (flipped[0].val === flipped[1].val) {
+              flipped[0].el.classList.remove('flipped');
+              flipped[1].el.classList.remove('flipped');
+              flipped[0].el.classList.add('matched');
+              flipped[1].el.classList.add('matched');
+              matched += 2;
+              if (matched === cards.length) {
+                setTimeout(() => initZenMatch(), 1200);
+              }
+            } else {
+              flipped[0].el.classList.remove('flipped');
+              flipped[1].el.classList.remove('flipped');
+              flipped[0].el.textContent = '';
+              flipped[1].el.textContent = '';
+            }
+            flipped = [];
+          }, 700);
+        }
+      });
+      grid.appendChild(btn);
+    });
+  }
+
+  function updateZenMoves() {
+    const el = $('zenMoves');
+    if (el) el.textContent = `${zenMoves} ${zenMoves === 1 ? 'move' : 'moves'}`;
+  }
+
+  $('zenReset')?.addEventListener('click', () => initZenMatch());
+
+  /* ══════════════════════════════════════════
+     BREATHE
+     ══════════════════════════════════════════ */
+
+  function initBreathe() {
+    const circle = $('breatheCircle');
+    const label = $('breatheLabel');
+    if (!circle || !label) return;
+
+    let expanded = false;
+    const phases = ['breathe in...', 'hold...', 'breathe out...', 'hold...'];
+    let phaseIdx = 0;
+
+    setInterval(() => {
+      if ($('view-calm')?.classList.contains('active')) {
+        expanded = !expanded;
+        circle.classList.toggle('expanded', expanded);
+        label.textContent = phases[phaseIdx % phases.length];
+        phaseIdx++;
+      }
+    }, 4000);
+  }
+
+  /* ══════════════════════════════════════════
+     RENDER
+     ══════════════════════════════════════════ */
 
   function render(view: string): void {
     if (view === 'journal') renderJournal();
@@ -364,268 +789,6 @@ import '../styles/global.css';
     renderInsights();
   }
 
-  function renderJournal(): void {
-    document.getElementById('journalCount')!.textContent = state.journal.length.toString();
-    const list = document.getElementById('journalList')!;
-    if (state.journal.length === 0) {
-      list.innerHTML = '<div class="empty">nothing here yet.</div>';
-      return;
-    }
-    list.innerHTML = state.journal.map((j) => {
-      const dt = new Date(j.ts).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-      let imgs = '';
-      if (j.images.length > 0) {
-        imgs = '<div class="entry-images">' + j.images.map((src) => `<img src="${src}" alt="img" loading="lazy" />`).join('') + '</div>';
-      }
-      return `
-        <div class="card">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <div class="entry-date">${dt}</div>
-            <button class="swipe-del" onclick="window.delJournal('${j.id}')" aria-label="delete">${trashIconSm}</button>
-          </div>
-          ${imgs}
-          <div class="entry-text">${escapeHtml(j.text)}</div>
-        </div>
-      `;
-    }).join('');
-  }
-
-  function renderHabits(): void {
-    const list = document.getElementById('habitList')!;
-    document.getElementById('habitDate')!.textContent = getFormattedDate();
-    if (state.habits.length === 0) {
-      list.innerHTML = '<div class="empty">no habits added.</div>';
-      return;
-    }
-    const dates = last7Dates();
-    list.innerHTML = state.habits.map((h) => {
-      const streak = calcStreak(h);
-      const doneToday = (h.dates || []).includes(todayKey());
-      const dots = dates.map((d) => `<div class="dot ${(h.dates || []).includes(d) ? 'on' : ''}"></div>`).join('');
-      return `
-        <div class="card">
-          <div class="habit-row">
-            <button class="habit-check ${doneToday ? 'done' : ''}" onclick="window.toggleHabit('${h.id}', '${todayKey()}')" aria-label="toggle habit">
-              ${checkIcon}
-            </button>
-            <div class="habit-name">${escapeHtml(h.name)}</div>
-            <div class="habit-streak">${streak} day streak</div>
-            <button class="swipe-del" onclick="window.delHabit('${h.id}')" aria-label="delete">${trashIcon}</button>
-          </div>
-          <div class="dots">${dots}</div>
-        </div>
-      `;
-    }).join('');
-  }
-
-  function renderTasks(): void {
-    const list = document.getElementById('taskList')!;
-    const scroller = document.getElementById('dayScroller')!;
-    
-    if (dailyFocusInput) {
-      dailyFocusInput.value = state.dailyFocus[selectedDate] || '';
-    }
-
-    const dates = last7Dates();
-    if (dates[dates.length - 1] !== todayKey()) dates.push(todayKey());
-    const chips = dates.map((d) => {
-      const dt = new Date(d);
-      const dow = dt.toLocaleDateString(undefined, { weekday: 'short' });
-      const num = dt.getDate();
-      return `
-        <div class="day-chip ${d === selectedDate ? 'active' : ''}" onclick="window.selectDate('${d}')">
-          <div class="dow">${dow}</div>
-          <div class="num">${num}</div>
-        </div>
-      `;
-    });
-    scroller.innerHTML = chips.join('');
-
-    const dayTasks = state.tasks.filter((t) => t.date === selectedDate);
-    if (dayTasks.length === 0) {
-      list.innerHTML = '<div class="empty">no tasks for this day.</div>';
-      return;
-    }
-    list.innerHTML = dayTasks.map((t) => `
-      <div class="card" style="padding: 14px 18px;">
-        <div class="task-row">
-          <button class="task-check ${t.done ? 'done' : ''}" onclick="window.toggleTask('${t.id}')">
-            ${checkIcon}
-          </button>
-          <div class="task-text ${t.done ? 'done' : ''}">${escapeHtml(t.text)}</div>
-          <button class="swipe-del" onclick="window.delTask('${t.id}')">${trashIconSm}</button>
-        </div>
-      </div>
-    `).join('');
-  }
-
-  function renderInsights(): void {
-    const statGrid = document.getElementById('statGrid')!;
-    const bestStreak = Math.max(0, ...state.habits.map((h) => calcStreak(h)));
-    const tasksDone = state.tasks.filter((t) => t.done).length;
-    statGrid.innerHTML = `
-      <div><div class="stat-num">${state.journal.length}</div><div class="stat-label">entries</div></div>
-      <div><div class="stat-num">${bestStreak}</div><div class="stat-label">best streak</div></div>
-      <div><div class="stat-num">${tasksDone}</div><div class="stat-label">tasks done</div></div>
-      <div><div class="stat-num">${state.habits.length}</div><div class="stat-label">habits tracked</div></div>
-    `;
-
-    const sList = document.getElementById('streakList')!;
-    if (state.habits.length === 0) {
-      sList.innerHTML = '<div class="empty">add habits to see streaks.</div>';
-      return;
-    }
-    sList.innerHTML = state.habits.map((h) => `
-      <div class="card" style="display:flex; justify-content:space-between; padding: 14px 18px;">
-        <div style="font-weight:600; font-size:14px;">${escapeHtml(h.name)}</div>
-        <div style="color:var(--text-dim); font-size:12px;">${calcStreak(h)} days</div>
-      </div>
-    `).join('');
-  }
-
-  // Sync Logic
-  const syncIdInput = document.getElementById('syncIdInput') as HTMLInputElement;
-  const syncPassInput = document.getElementById('syncPassInput') as HTMLInputElement;
-  const syncStatus = document.getElementById('syncStatus') as HTMLDivElement;
-
-  document.getElementById('btnPush')?.addEventListener('click', async () => {
-    const pass = syncPassInput.value;
-    if (!pass) return syncStatus.textContent = 'password required';
-    syncStatus.textContent = 'encrypting and pushing...';
-    try {
-      const dataStr = JSON.stringify(state);
-      const encrypted = await encryptData(pass, dataStr);
-      
-      let sid = syncIdInput.value.trim();
-      if (sid) {
-        await updateInCloud(sid, encrypted);
-      } else {
-        sid = await pushToCloud(encrypted);
-        syncIdInput.value = sid;
-        state.syncId = sid;
-        saveData('liminal-sync', sid);
-      }
-      syncStatus.textContent = `synced successfully at ${new Date().toLocaleTimeString()}`;
-    } catch (e) {
-      console.error(e);
-      syncStatus.textContent = 'sync failed. check console.';
-    }
-  });
-
-  document.getElementById('btnPull')?.addEventListener('click', async () => {
-    const sid = syncIdInput.value.trim();
-    const pass = syncPassInput.value;
-    if (!sid || !pass) return syncStatus.textContent = 'sync id and password required';
-    syncStatus.textContent = 'pulling and decrypting...';
-    try {
-      const encrypted = await pullFromCloud(sid);
-      const decStr = await decryptData(pass, encrypted.ciphertext, encrypted.salt, encrypted.iv);
-      const newState = JSON.parse(decStr) as AppState;
-      
-      // Merge into state
-      state = { ...state, ...newState };
-      saveData('liminal-journal', state.journal);
-      saveData('liminal-habits', state.habits);
-      saveData('liminal-tasks', state.tasks);
-      saveData('liminal-focus', state.dailyFocus);
-      saveData('liminal-sync', sid);
-      
-      renderAll();
-      syncStatus.textContent = `data restored at ${new Date().toLocaleTimeString()}`;
-    } catch (e) {
-      console.error(e);
-      syncStatus.textContent = 'pull failed (wrong password?)';
-    }
-  });
-
-  // Zen Match Game
-  function initZenMatch() {
-    const grid = document.getElementById('zenMatchGrid');
-    if (!grid) return;
-    const icons = ['🌿','💧','☀️','🌙','✨','🔥','☁️','🏔️'];
-    let cards = [...icons, ...icons].sort(() => Math.random() - 0.5);
-    
-    let flipped: {idx: number, el: HTMLElement, val: string}[] = [];
-    let matched = 0;
-
-    grid.innerHTML = '';
-    cards.forEach((icon, idx) => {
-      const btn = document.createElement('button');
-      btn.style.width = '60px';
-      btn.style.height = '60px';
-      btn.style.borderRadius = '12px';
-      btn.style.background = 'var(--glass-strong)';
-      btn.style.border = '1px solid var(--border)';
-      btn.style.fontSize = '28px';
-      btn.style.display = 'flex';
-      btn.style.alignItems = 'center';
-      btn.style.justifyContent = 'center';
-      btn.style.cursor = 'pointer';
-      btn.style.color = 'transparent'; // hidden initially
-      btn.style.transition = 'all 0.3s var(--ease-smooth)';
-      
-      btn.addEventListener('click', () => {
-        if (flipped.length === 2 || btn.style.color !== 'transparent') return;
-        
-        btn.style.color = 'var(--text)';
-        btn.textContent = icon;
-        btn.style.transform = 'scale(0.95)';
-        
-        flipped.push({idx, el: btn, val: icon});
-        
-        if (flipped.length === 2) {
-          setTimeout(() => {
-            if (flipped[0].val === flipped[1].val) {
-              flipped[0].el.style.opacity = '0.3';
-              flipped[1].el.style.opacity = '0.3';
-              flipped[0].el.style.cursor = 'default';
-              flipped[1].el.style.cursor = 'default';
-              matched += 2;
-              if (matched === cards.length) {
-                setTimeout(() => initZenMatch(), 1000);
-              }
-            } else {
-              flipped[0].el.style.color = 'transparent';
-              flipped[1].el.style.color = 'transparent';
-              flipped[0].el.textContent = '';
-              flipped[1].el.textContent = '';
-            }
-            flipped[0].el.style.transform = 'scale(1)';
-            flipped[1].el.style.transform = 'scale(1)';
-            flipped = [];
-          }, 800);
-        }
-      });
-      grid.appendChild(btn);
-    });
-  }
-
-  // Breathe Animation
-  function initBreathe() {
-    const circle = document.getElementById('breatheCircle');
-    if (!circle) return;
-    let expanded = false;
-    setInterval(() => {
-      if (document.getElementById('view-calm')?.classList.contains('active')) {
-        circle.style.transform = expanded ? 'scale(1)' : 'scale(1.8)';
-        circle.style.opacity = expanded ? '0.15' : '0.3';
-        expanded = !expanded;
-      }
-    }, 4000);
-  }
-
-  // Expose for inline handlers
-  (window as any).delJournal = delJournal;
-  (window as any).toggleHabit = toggleHabit;
-  (window as any).delHabit = delHabit;
-  (window as any).toggleTask = toggleTask;
-  (window as any).delTask = delTask;
-  (window as any).selectDate = (d: string) => {
-    selectedDate = d;
-    render('tasks');
-  };
-
   // Start
   init();
 </script>
-

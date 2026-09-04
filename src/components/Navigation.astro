@@ -1,26 +1,31 @@
 ---
-import { BookOpen, CircleCheckBig, ListChecks, User, Gamepad2 } from '@lucide/astro';
+import { BookOpen, CircleCheckBig, ListChecks, User, Wind } from '@lucide/astro';
 ---
 
 <nav id="tabbar">
   <button class="nav-btn active" data-view="journal" aria-label="journal">
     <BookOpen size={21} />
-    journal
+    <span>journal</span>
+    <span class="nav-indicator"></span>
   </button>
   <button class="nav-btn" data-view="habits" aria-label="habits">
     <CircleCheckBig size={21} />
-    habits
+    <span>habits</span>
+    <span class="nav-indicator"></span>
   </button>
   <button class="nav-btn" data-view="tasks" aria-label="tasks">
     <ListChecks size={21} />
-    tasks
+    <span>tasks</span>
+    <span class="nav-indicator"></span>
   </button>
   <button class="nav-btn" data-view="calm" aria-label="calm">
-    <Gamepad2 size={21} />
-    calm
+    <Wind size={21} />
+    <span>calm</span>
+    <span class="nav-indicator"></span>
   </button>
   <button class="nav-btn" data-view="insights" aria-label="you">
     <User size={21} />
-    you
+    <span>you</span>
+    <span class="nav-indicator"></span>
   </button>
 </nav>
